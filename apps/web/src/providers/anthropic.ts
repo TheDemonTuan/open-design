@@ -25,8 +25,8 @@ export { isOpenAICompatible } from './openai-compatible';
 
 export interface StreamHandlers {
   onDelta: (textDelta: string) => void;
-  onDone: (fullText: string) => void;
-  onError: (err: Error) => void;
+  onDone: (fullText: string) => void | Promise<void>;
+  onError: (err: Error) => void | Promise<void>;
 }
 
 export function makeClient(cfg: AppConfig): Anthropic {
@@ -74,7 +74,7 @@ export async function streamMessage(
     return;
   }
   if (cfg.apiProtocol === 'openai' || (!cfg.apiProtocol && isOpenAICompatible(cfg.model, cfg.baseUrl))) {
-    return streamMessageOpenAI(cfg, system, history, signal, handlers);
+    return streamMessageOpenAI(cfg, system, history, signal, handlers, context);
   }
 
   if (usesAnthropicProxy(cfg)) {

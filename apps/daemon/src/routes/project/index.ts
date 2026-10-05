@@ -330,7 +330,7 @@ function assertProjectCreatePreparationWithinDeadline(
   }
 }
 
-export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'projectStore' | 'projectFiles' | 'conversations' | 'templates' | 'status' | 'events' | 'ids' | 'telemetry' | 'appConfig' | 'agents' | 'validation' | 'collabSync'> {
+export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'projectStore' | 'projectFiles' | 'conversations' | 'templates' | 'status' | 'events' | 'ids' | 'telemetry' | 'appConfig' | 'agents' | 'validation' | 'collabSync' | 'lifecycle'> {
   /**
    * Request-wide deadline for the read-only preparation POST /api/projects
    * runs before its transaction. Production keeps the 15s default; tests and
@@ -5784,7 +5784,7 @@ export function registerProjectArtifactRoutes(app: Express, ctx: RegisterProject
 
 }
 
-export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'http' | 'paths' | 'uploads' | 'node' | 'projectStore' | 'projectFiles' | 'documents' | 'artifacts' | 'projectPreviewScopes'> {
+export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'http' | 'paths' | 'uploads' | 'node' | 'projectStore' | 'projectFiles' | 'documents' | 'artifacts' | 'projectPreviewScopes' | 'lifecycle'> {
   verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority;
   authorizeProjectRequest?: AuthorizeProjectRequest;
   /** Startup-hydrated O(1) quarantine lookup for stale Team mirrors. */
@@ -7271,6 +7271,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       // project the member is told they cannot modify. The read itself is
       // never refused: browsing history stays open (飞书 recvq56vFjQKfT).
       if (workingFileContent !== null && versions.length === 0
+        && (!ctx.lifecycle?.isMaintenance || !ctx.lifecycle.isMaintenance())
         && await requestCanWriteWorkspaceProject(
           req,
           getWorkspaceProject,
@@ -7278,14 +7279,23 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           db,
           project.id,
         )) {
-        const initial = await ensureCurrentProjectFileVersion(
-          PROJECTS_DIR,
-          project.id,
-          historyFileName,
-          workingFileContent,
-          { source: 'manual', promptSource: 'manual' },
-          project.metadata,
-        );
+        const initial = ctx.lifecycle?.withOperation
+          ? await ctx.lifecycle.withOperation(() => ensureCurrentProjectFileVersion(
+              PROJECTS_DIR,
+              project.id,
+              historyFileName,
+              workingFileContent!,
+              { source: 'manual', promptSource: 'manual' },
+              project.metadata,
+            ))
+          : await ensureCurrentProjectFileVersion(
+              PROJECTS_DIR,
+              project.id,
+              historyFileName,
+              workingFileContent,
+              { source: 'manual', promptSource: 'manual' },
+              project.metadata,
+            );
         if (initial) {
           versions = await listProjectFileVersions(PROJECTS_DIR, project.id, historyFileName, project.metadata);
         }

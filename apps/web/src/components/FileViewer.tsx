@@ -9962,8 +9962,9 @@ function HtmlViewer({
   // has been rewritten to its own scoped raw URL; otherwise the first srcDoc
   // paint can leak an unscoped font/image request before the async rewrite
   // finishes.
+  const accessSafePreview = process.env.NEXT_PUBLIC_OD_ACCESS_SAFE_PREVIEW === '1';
   const scopedRelativeAssetRefs =
-    workspaceContext?.workspaceType === 'team' && relativeProjectAssetRefs;
+    (accessSafePreview || workspaceContext?.workspaceType === 'team') && relativeProjectAssetRefs;
   const livePreviewSource = scopedRelativeAssetRefs && inlinedSource === null
     ? null
     : (inlinedSource ?? deckVisualSource);
@@ -10225,7 +10226,7 @@ function HtmlViewer({
     mode: 'preview',
     editMode: false,
   });
-  const useUrlLoadPreview = mode === 'preview' && urlLoadPreviewSupported;
+  const useUrlLoadPreview = accessSafePreview ? false : (mode === 'preview' && urlLoadPreviewSupported);
   // The edit bridge still requires srcDoc, but the URL document is the
   // canonical passive preview. Keep an otherwise eligible ordinary URL warm
   // behind Edit so closing the tool can be a visibility swap. Powered
@@ -10745,7 +10746,7 @@ function HtmlViewer({
     // refs also keep this pass because they first need project-file-list
     // normalization before the stable base can resolve them correctly.
     const requiresAssetMaterialization =
-      workspaceContext?.workspaceType === 'team' || projectRootAssetRefs;
+      accessSafePreview || workspaceContext?.workspaceType === 'team' || projectRootAssetRefs;
     if (!requiresAssetMaterialization) return;
     // Root-relative project asset refs need the confirmed file list before
     // they can be normalized; wait for it rather than inlining a half-fixed
@@ -18714,6 +18715,56 @@ function isBlockedPreviewAssetScheme(assetRef: string): boolean {
   const clean = assetRef.replace(/[\s\u0000-\u001F\u007F-\u009F]/g, '');
   return /^(?:javascript|data):/i.test(clean);
 }
+async function fetchProjectRelativeFontDataUrl(
+  projectId: string,
+  ownerFileName: string,
+  assetRef: string,
+  workspaceContext?: WorkspaceCollabContext | null,
+): Promise<string | null> {
+  const filePath = resolveProjectRelativePath(ownerFileName, assetRef);
+  if (!filePath || !/\.(woff2?|ttf|otf|eot)$/i.test(filePath)) return null;
+  try {
+    const resp = await fetch(
+      projectRawUrl(projectId, filePath, workspaceContext),
+      workspaceContext
+        ? { headers: workspaceProjectHeaders(workspaceContext), credentials: 'same-origin' }
+        : { credentials: 'same-origin' },
+    );
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') resolve(reader.result);
+        else resolve(null);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function materializeCssFonts(
+  projectId: string,
+  ownerFileName: string,
+  css: string,
+  workspaceContext?: WorkspaceCollabContext | null,
+): Promise<string> {
+  const fontMatches = Array.from(css.matchAll(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi));
+  let materialized = css;
+  for (const match of fontMatches) {
+    const rawRef = match[2]?.trim();
+    if (!rawRef || !/\.(woff2?|ttf|otf|eot)(\?.*)?$/i.test(rawRef)) continue;
+    const cleanRef = rawRef.split('?')[0]?.split('#')[0] ?? '';
+    const fontData = await fetchProjectRelativeFontDataUrl(projectId, ownerFileName, cleanRef, workspaceContext);
+    if (fontData) {
+      materialized = materialized.replace(match[0], `url("${fontData}")`);
+    }
+  }
+  return materialized;
+}
 
 async function inlineRelativeAssets(
   html: string,
@@ -18722,11 +18773,9 @@ async function inlineRelativeAssets(
   projectFilePaths: ReadonlySet<string> | null = null,
   workspaceContext?: WorkspaceCollabContext | null,
 ): Promise<string> {
+  const accessSafePreview = process.env.NEXT_PUBLIC_OD_ACCESS_SAFE_PREVIEW === '1';
   const toRawUrl = (projectPath: string) =>
     projectRawUrl(projectId, projectPath, workspaceContext);
-  // Root-relative project asset refs (confirmed against the real file list)
-  // become owner-relative first, so the stylesheet/script inlining below and
-  // the srcDoc <base href> rebasing treat them like any other relative ref.
   const normalized = projectFilePaths
     ? normalizeRootRelativeProjectAssetRefs(html, fileName, projectFilePaths)
     : html;
@@ -18738,17 +18787,20 @@ async function inlineRelativeAssets(
     const href = readHtmlAttr(tag, 'href');
     if (!rel || !/\bstylesheet\b/i.test(rel) || !href) continue;
     replacements.push(
-      fetchProjectRelativeText(projectId, fileName, href, workspaceContext).then((asset) =>
-        asset == null
-          ? null
-          : {
-              from: tag,
-              to:
-                `<style data-od-inline-asset="${escapeHtmlAttr(href)}">\n` +
-                `${rewriteInlinedCssAssetRefs(asset.text, asset.filePath, projectFilePaths, toRawUrl)
-                  .replace(/<\/style/gi, '<\\/style')}\n</style>`,
-            },
-      ),
+      fetchProjectRelativeText(projectId, fileName, href, workspaceContext).then(async (asset) => {
+        if (asset == null) return null;
+        let cssText = asset.text;
+        if (accessSafePreview) {
+          cssText = await materializeCssFonts(projectId, asset.filePath, cssText, workspaceContext);
+        }
+        return {
+          from: tag,
+          to:
+            `<style data-od-inline-asset="${escapeHtmlAttr(href)}">\n` +
+            `${rewriteInlinedCssAssetRefs(cssText, asset.filePath, projectFilePaths, toRawUrl)
+              .replace(/<\/style/gi, '<\\/style')}\n</style>`,
+        };
+      }),
     );
   }
 
@@ -18778,11 +18830,24 @@ async function inlineRelativeAssets(
   const resolved = (await Promise.all(replacements)).filter(
     (item): item is { from: string; to: string } => item !== null,
   );
-  const inlined = resolved.reduce(
+  let inlined = resolved.reduce(
     (next, { from, to }) => next.replace(from, () => to),
     normalized,
   );
-  return workspaceContext?.workspaceType === 'team' && projectFilePaths
+
+  if (accessSafePreview) {
+    const inlineStyles = inlined.match(/<style\b[^>]*>([\s\S]*?)<\/style>/gi) ?? [];
+    for (const tag of inlineStyles) {
+      const contentMatch = tag.match(/<style\b[^>]*>([\s\S]*?)<\/style>/i);
+      if (contentMatch && contentMatch[1]) {
+        const materializedCss = await materializeCssFonts(projectId, fileName, contentMatch[1], workspaceContext);
+        const replacedTag = tag.replace(contentMatch[1], materializedCss);
+        inlined = inlined.replace(tag, () => replacedTag);
+      }
+    }
+  }
+
+  return (accessSafePreview || workspaceContext?.workspaceType === 'team') && projectFilePaths
     ? rewriteProjectAssetRefsToRawUrls(inlined, fileName, projectFilePaths, toRawUrl)
     : inlined;
 }

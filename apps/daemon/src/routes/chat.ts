@@ -984,58 +984,92 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
   ];
 
   app.post('/api/proxy/anthropic/stream', async (req, res) => {
-    /** @type {Partial<ProxyStreamRequest>} */
-    const proxyBody = req.body || {};
-    if (rejectProxyPluginContext(proxyBody, res)) return;
-    const { baseUrl, apiKey, model, systemPrompt, messages, maxTokens } =
-      proxyBody;
-    if (!baseUrl || !apiKey || !model) {
+    if (ctx.lifecycle?.isAccepting && !ctx.lifecycle.isAccepting()) {
+      res.setHeader('Retry-After', '30');
       return sendApiError(
         res,
-        400,
-        'BAD_REQUEST',
-        'baseUrl, apiKey, and model are required',
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'Design server is in maintenance; retry after deployment.',
       );
     }
+    const releaseOp = ctx.lifecycle?.acquireOperationSync ? ctx.lifecycle.acquireOperationSync() : () => {};
+    try {
+      /** @type {Partial<ProxyStreamRequest>} */
+      const proxyBody = req.body || {};
+      if (rejectProxyPluginContext(proxyBody, res)) return;
+      const { baseUrl, apiKey, model, systemPrompt, messages, maxTokens } =
+        proxyBody;
+      if (!baseUrl || !apiKey || !model) {
+        return sendApiError(
+          res,
+          400,
+          'BAD_REQUEST',
+          'baseUrl, apiKey, and model are required',
+        );
+      }
 
-    const validated = await validateExternalApiBaseUrl(baseUrl);
-    if (validated.error) {
-      return sendApiError(
-        res,
-        validated.forbidden ? 403 : 400,
-        validated.forbidden ? 'FORBIDDEN' : 'BAD_REQUEST',
-        validated.error,
+      const validated = await validateExternalApiBaseUrl(baseUrl);
+      if (validated.error) {
+        return sendApiError(
+          res,
+          validated.forbidden ? 403 : 400,
+          validated.forbidden ? 'FORBIDDEN' : 'BAD_REQUEST',
+          validated.error,
+        );
+      }
+      const reasoningDenial = authorizeReasoningEgress({
+        policy: proxyBody.reasoningExecution,
+        routeKind: 'proxy',
+        provider: 'anthropic',
+        resolvedBaseUrl: baseUrl,
+        model,
+      });
+      if (reasoningDenial) return sendReasoningEgressDenial(res, reasoningDenial);
+
+      const url = appendVersionedApiPath(baseUrl, '/messages');
+      console.log(
+        `[proxy:anthropic] ${req.method} ${validated.parsed!.hostname} model=${model}`,
       );
+
+      return await runAnthropicChatStream(res, {
+        url,
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+        payload: buildAnthropicChatPayload(model, systemPrompt, messages, maxTokens),
+        logTag: 'proxy:anthropic',
+      });
+    } finally {
+      releaseOp();
     }
-    const reasoningDenial = authorizeReasoningEgress({
-      policy: proxyBody.reasoningExecution,
-      routeKind: 'proxy',
-      provider: 'anthropic',
-      resolvedBaseUrl: baseUrl,
-      model,
-    });
-    if (reasoningDenial) return sendReasoningEgressDenial(res, reasoningDenial);
-
-    const url = appendVersionedApiPath(baseUrl, '/messages');
-    console.log(
-      `[proxy:anthropic] ${req.method} ${validated.parsed!.hostname} model=${model}`,
-    );
-
-    return runAnthropicChatStream(res, {
-      url,
-      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      payload: buildAnthropicChatPayload(model, systemPrompt, messages, maxTokens),
-      logTag: 'proxy:anthropic',
-    });
   });
 
   app.post('/api/proxy/openai/stream', async (req, res) => {
+    if (ctx.lifecycle?.isAccepting && !ctx.lifecycle.isAccepting()) {
+      res.setHeader('Retry-After', '30');
+      return sendApiError(
+        res,
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'Design server is in maintenance; retry after deployment.',
+      );
+    }
+    const releaseOp = ctx.lifecycle?.acquireOperationSync ? ctx.lifecycle.acquireOperationSync() : () => {};
     /** @type {Partial<ProxyStreamRequest>} */
     const proxyBody = req.body || {};
-    if (rejectProxyPluginContext(proxyBody, res)) return;
+    const deploymentTurnId = typeof req.headers['x-opendesign-turn'] === 'string'
+      ? req.headers['x-opendesign-turn']
+      : (typeof proxyBody.deploymentTurnId === 'string' ? proxyBody.deploymentTurnId : undefined);
+    if (deploymentTurnId && ctx.lifecycle?.markProxyStarted) {
+      ctx.lifecycle.markProxyStarted(deploymentTurnId);
+    }
+    if (rejectProxyPluginContext(proxyBody, res)) {
+      releaseOp();
+      return;
+    }
     const { baseUrl, apiKey, model, systemPrompt, messages, maxTokens } =
       proxyBody;
     if (!baseUrl || !apiKey || !model) {
+      releaseOp();
       return sendApiError(
         res,
         400,
@@ -1067,9 +1101,29 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       `[proxy:openai] ${req.method} ${validated.parsed!.hostname} model=${model}`,
     );
 
+    let effectiveSystemPrompt = systemPrompt;
+    if (ctx.chat?.composeDaemonSystemPrompt && typeof proxyBody.projectId === 'string' && proxyBody.projectId) {
+      try {
+        const composed = await ctx.chat.composeDaemonSystemPrompt({
+          agentId: 'openai',
+          projectId: proxyBody.projectId,
+          streamFormat: 'plain',
+          locale: typeof proxyBody.locale === 'string' ? proxyBody.locale : undefined,
+          sessionMode: typeof proxyBody.sessionMode === 'string' ? proxyBody.sessionMode : undefined,
+          designSystemId: typeof proxyBody.designSystemId === 'string' ? proxyBody.designSystemId : undefined,
+          byokMediaDefaults: proxyBody.byokMediaDefaults,
+        });
+        if (composed && typeof composed.prompt === 'string' && composed.prompt.trim().length > 0) {
+          effectiveSystemPrompt = composed.prompt;
+        }
+      } catch (err: unknown) {
+        console.warn('[proxy:openai] failed to compose system prompt:', err);
+      }
+    }
+
     const payloadMessages = Array.isArray(messages) ? [...messages] : [];
-    if (typeof systemPrompt === 'string' && systemPrompt) {
-      payloadMessages.unshift({ role: 'system', content: systemPrompt });
+    if (typeof effectiveSystemPrompt === 'string' && effectiveSystemPrompt) {
+      payloadMessages.unshift({ role: 'system', content: effectiveSystemPrompt });
     }
 
     const effectiveMaxTokens =
@@ -1177,16 +1231,26 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       sendProxyError(sse, err.message, { code: 'INTERNAL_ERROR' });
       sse.end();
     } finally {
+      releaseOp();
       await proxyDispatcher?.close();
     }
   });
 
   app.post('/api/proxy/azure/stream', async (req, res) => {
-    /** @type {Partial<ProxyStreamRequest>} */
-    const proxyBody = req.body || {};
-    if (rejectProxyPluginContext(proxyBody, res)) return;
-    const { baseUrl, apiKey, model, systemPrompt, messages, maxTokens, apiVersion } =
-      proxyBody;
+    if (ctx.lifecycle?.isAccepting && !ctx.lifecycle.isAccepting()) {
+      res.setHeader('Retry-After', '30');
+      return sendApiError(
+        res,
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'Design server is in maintenance; retry after deployment.',
+      );
+    }
+      /** @type {Partial<ProxyStreamRequest>} */
+      const proxyBody = req.body || {};
+      if (rejectProxyPluginContext(proxyBody, res)) return;
+      const { baseUrl, apiKey, model, systemPrompt, messages, maxTokens, apiVersion } =
+        proxyBody;
     if (!baseUrl || !apiKey || !model) {
       return sendApiError(
         res,
@@ -1256,6 +1320,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       stream: true,
     };
 
+    const releaseOp = ctx.lifecycle?.acquireOperationSync ? ctx.lifecycle.acquireOperationSync() : () => {};
     const sse = createSseResponse(res);
     let proxyDispatcher: ReturnType<typeof proxyDispatcherRequestInit> | null = null;
     try {
@@ -1341,14 +1406,26 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       sendProxyError(sse, err.message, { code: 'INTERNAL_ERROR' });
       sse.end();
     } finally {
+      releaseOp();
       await proxyDispatcher?.close();
     }
   });
 
   app.post('/api/proxy/google/stream', async (req, res) => {
-    /** @type {Partial<ProxyStreamRequest>} */
-    const proxyBody = req.body || {};
-    if (rejectProxyPluginContext(proxyBody, res)) return;
+    if (ctx.lifecycle?.isAccepting && !ctx.lifecycle.isAccepting()) {
+      res.setHeader('Retry-After', '30');
+      return sendApiError(
+        res,
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'Design server is in maintenance; retry after deployment.',
+      );
+    }
+    const releaseOp = ctx.lifecycle?.acquireOperationSync ? ctx.lifecycle.acquireOperationSync() : () => {};
+    try {
+      /** @type {Partial<ProxyStreamRequest>} */
+      const proxyBody = req.body || {};
+      if (rejectProxyPluginContext(proxyBody, res)) return;
     const { baseUrl, apiKey, model, systemPrompt, messages, maxTokens } = proxyBody;
     if (!apiKey || !model) {
       return sendApiError(
@@ -1383,18 +1460,34 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       `[proxy:google] ${req.method} ${validated.parsed!.hostname} model=${model}`,
     );
 
-    return runGeminiChatStream(res, {
-      url,
-      headers: { 'x-goog-api-key': apiKey },
-      payload: buildGeminiChatPayload(systemPrompt, messages, maxTokens),
-      model,
-      logTag: 'proxy:google',
-    });
+      return await runGeminiChatStream(res, {
+        url,
+        headers: { 'x-goog-api-key': apiKey },
+        payload: buildGeminiChatPayload(systemPrompt, messages, maxTokens),
+        model,
+        logTag: 'proxy:google',
+      });
+    } finally {
+      releaseOp();
+    }
   });
 
   app.post('/api/proxy/ollama/stream', async (req, res) => {
+    if (ctx.lifecycle?.isAccepting && !ctx.lifecycle.isAccepting()) {
+      res.setHeader('Retry-After', '30');
+      return sendApiError(
+        res,
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'Design server is in maintenance; retry after deployment.',
+      );
+    }
+    const releaseOp = ctx.lifecycle?.acquireOperationSync ? ctx.lifecycle.acquireOperationSync() : () => {};
     const proxyBody = req.body || {};
-    if (rejectProxyPluginContext(proxyBody, res)) return;
+    if (rejectProxyPluginContext(proxyBody, res)) {
+      releaseOp();
+      return;
+    }
     const { baseUrl, apiKey, model, systemPrompt, messages, maxTokens } = proxyBody;
     if (!apiKey || !model) {
       return sendApiError(res, 400, 'BAD_REQUEST', 'apiKey and model are required');
@@ -1486,6 +1579,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       sendProxyError(sse, err.message, { code: 'INTERNAL_ERROR' });
       sse.end();
     } finally {
+      releaseOp();
       await proxyDispatcher?.close();
     }
   });
@@ -1551,8 +1645,21 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     opts: ByokToolChatProxyOptions,
   ) => {
    app.post(routePath, async (req, res) => {
+    if (ctx.lifecycle?.isAccepting && !ctx.lifecycle.isAccepting()) {
+      res.setHeader('Retry-After', '30');
+      return sendApiError(
+        res,
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'Design server is in maintenance; retry after deployment.',
+      );
+    }
+    const releaseOp = ctx.lifecycle?.acquireOperationSync ? ctx.lifecycle.acquireOperationSync() : () => {};
     const proxyBody = req.body || {};
-    if (rejectProxyPluginContext(proxyBody, res)) return;
+    if (rejectProxyPluginContext(proxyBody, res)) {
+      releaseOp();
+      return;
+    }
     const {
       baseUrl,
       apiKey,
@@ -2321,6 +2428,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       sendProxyError(sse, err.message, { code: 'INTERNAL_ERROR' });
       sse.end();
     } finally {
+      releaseOp();
       await proxyDispatcher?.close();
     }
    });

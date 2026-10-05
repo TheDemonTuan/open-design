@@ -619,6 +619,10 @@ export interface RegisterRunRoutesDeps {
   };
   lifecycle: {
     isDaemonShuttingDown: () => boolean;
+    isMaintenance?: () => boolean;
+    isAccepting?: () => boolean;
+    acquireOperationSync?: () => () => void;
+    withOperation?: <T>(work: () => Promise<T>) => Promise<T>;
   };
   plugins: {
     connectorService: ConnectorService;
@@ -1680,8 +1684,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
   }
 
   const handleRunCreate = async (req: ApiRequest, res: ApiResponse) => {
-    if (ctx.lifecycle.isDaemonShuttingDown()) {
-      return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'daemon is shutting down');
+    if (ctx.lifecycle.isDaemonShuttingDown() || (ctx.lifecycle.isAccepting && !ctx.lifecycle.isAccepting())) {
+      res.setHeader('Retry-After', '30');
+      return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'Design server is in maintenance; retry after deployment.');
     }
     const requestBody = toJsonRecord(req.body);
     const requestAnalyticsContext = readAnalyticsContext(req);
@@ -3740,8 +3745,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
   });
 
   app.post('/api/chat', async (req: ApiRequest, res: ApiResponse) => {
-    if (ctx.lifecycle.isDaemonShuttingDown()) {
-      return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'daemon is shutting down');
+    if (ctx.lifecycle.isDaemonShuttingDown() || (ctx.lifecycle.isAccepting && !ctx.lifecycle.isAccepting())) {
+      res.setHeader('Retry-After', '30');
+      return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'Design server is in maintenance; retry after deployment.');
     }
     const requestBody = toJsonRecord(req.body);
     const mediaExecution = parseMediaExecutionPolicyInput(requestBody.mediaExecution);

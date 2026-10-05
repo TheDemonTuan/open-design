@@ -1984,7 +1984,7 @@ function roleForExportManifestFile(
   return 'other';
 }
 
-export interface RegisterFinalizeRoutesDeps extends RouteDeps<'db' | 'http' | 'paths' | 'projectStore' | 'validation' | 'finalize'> {
+export interface RegisterFinalizeRoutesDeps extends RouteDeps<'db' | 'http' | 'paths' | 'projectStore' | 'validation' | 'finalize' | 'lifecycle'> {
   authorizeProjectRequest: AuthorizeProjectRequest;
 }
 
@@ -2085,6 +2085,17 @@ export function registerFinalizeRoutes(app: Express, ctx: RegisterFinalizeRoutes
       };
       res.on('close', abortFromRequest);
 
+      if (ctx.lifecycle?.isAccepting && !ctx.lifecycle.isAccepting()) {
+        res.setHeader('Retry-After', '30');
+        return sendApiError(
+          res,
+          503,
+          'UPSTREAM_UNAVAILABLE',
+          'Design server is in maintenance; retry after deployment.',
+        );
+      }
+      const releaseOp = ctx.lifecycle?.acquireOperationSync ? ctx.lifecycle.acquireOperationSync() : () => {};
+
       let result;
       try {
         result = await finalizeDesignPackage(
@@ -2105,6 +2116,7 @@ export function registerFinalizeRoutes(app: Express, ctx: RegisterFinalizeRoutes
           },
         );
       } finally {
+        releaseOp();
         res.off('close', abortFromRequest);
       }
       res.json(result);

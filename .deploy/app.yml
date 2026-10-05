@@ -1,0 +1,14 @@
+version: 1
+app: opendesign
+strategy: recreate
+image: ghcr.io/thedemontuan/opendesign
+platform: linux/arm64
+build:
+  dockerfile: deploy/Dockerfile
+runtime:
+  port: 7456
+health:
+  path: /api/health
+  timeout_seconds: 60
+route:
+  timeout_seconds: 30

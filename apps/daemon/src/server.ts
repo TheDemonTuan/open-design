@@ -935,6 +935,8 @@ import { registerFinalizeRoutes, registerImportRoutes, registerProjectExportRout
 import { registerHandoffRoutes } from './routes/handoff.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './design/index.js';
 import { TranscriptExportLockedError } from './transcript-export.js';
+import { DeploymentLifecycle } from './deployment-lifecycle.js';
+import { registerDeploymentRoutes } from './routes/deployment.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerRunRoutes } from './routes/runs.js';
 import { registerStrategyRolloutRoutes } from './routes/strategy-rollout.js';
@@ -7981,6 +7983,19 @@ export async function startServer({
     getAppVersion: currentAppVersion,
     readAnalyticsContext,
   };
+  const deploymentLifecycle = new DeploymentLifecycle({
+    runtimeDataDir: RUNTIME_DATA_DIR,
+    getActiveRunsCount: () => design.runs.list({ status: 'active' }).length,
+  });
+
+  const lifecycleDeps = {
+    isDaemonShuttingDown: () => daemonShuttingDown,
+    isMaintenance: () => deploymentLifecycle.isMaintenance(),
+    isAccepting: () => deploymentLifecycle.isAccepting(),
+    acquireOperationSync: () => deploymentLifecycle.acquireOperationSync(),
+    withOperation: <T>(work: () => Promise<T>) => deploymentLifecycle.withOperation(work),
+    markProxyStarted: (turnId: string) => deploymentLifecycle.markProxyStarted(turnId),
+  };
   const taskObservationRollout = createTaskObservationRolloutService({
     db,
     dataDir: RUNTIME_DATA_DIR,
@@ -8212,6 +8227,7 @@ export async function startServer({
     res.json({
       ok: true,
       version: versionInfo.version,
+      ...(process.env.OD_DEPLOYMENT_SLOT === 'single' ? { deployment_slot: 'single' } : {}),
       amrTerminalReporter: {
         status: 'active',
         pending,
@@ -8225,7 +8241,8 @@ export async function startServer({
 
   app.get('/api/ready', async (_req, res) => {
     const versionInfo = await readCurrentAppVersionInfo();
-    const ready = !daemonShuttingDown;
+    const ready = !daemonShuttingDown && !deploymentLifecycle.isMaintenance();
+    res.setHeader('Cache-Control', 'no-store');
     res.status(ready ? 200 : 503).json({
       ok: ready,
       ready,
@@ -8297,6 +8314,11 @@ export async function startServer({
 
   registerWhatsNewRoutes(app, {
     whatsNew: createWhatsNewService(),
+  });
+  registerDeploymentRoutes(app, {
+    db,
+    deploymentLifecycle,
+    authorizeProjectRequest,
   });
 
   registerPluginEventRoutes(app, {
@@ -8712,6 +8734,7 @@ export async function startServer({
       ? { projectCreatePreparationTimeoutMs }
       : {}),
     http: httpDeps,
+    lifecycle: lifecycleDeps,
     paths: pathDeps,
     projectStore: projectStoreDeps,
     projectFiles: projectFileDeps,
@@ -9211,6 +9234,7 @@ export async function startServer({
     validation: validationDeps,
     finalize: finalizeDeps,
     authorizeProjectRequest,
+    lifecycle: lifecycleDeps,
   });
   registerHandoffRoutes(app, {
     db,
@@ -9250,6 +9274,7 @@ export async function startServer({
     db,
     http: httpDeps,
     paths: pathDeps,
+    lifecycle: lifecycleDeps,
     uploads: uploadDeps,
     node: nodeDeps,
     projectStore: projectStoreDeps,
@@ -9291,6 +9316,7 @@ export async function startServer({
     research: researchDeps,
     authorizeProjectRequest,
     authorizeProjectToolRequest,
+    lifecycle: lifecycleDeps,
   });
 
   registerVelaRoutes(app, {
@@ -17475,7 +17501,7 @@ export async function startServer({
     paths: { BUNDLED_PLUGINS_DIR, PROJECTS_DIR, RUNTIME_DATA_DIR },
     agents: { detectAgents, getAgentDef },
     chat: { prepareOdNextInitialPromptBundle, startChatRun },
-    lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
+    lifecycle: lifecycleDeps,
     plugins: {
       connectorService,
       detectSkillPluginCandidateOnRunSuccess,
@@ -18028,12 +18054,12 @@ export async function startServer({
     http: httpDeps,
     authorizeProjectRequest,
     paths: pathDeps,
-    chat: { prepareOdNextInitialPromptBundle, startChatRun },
+    chat: { prepareOdNextInitialPromptBundle, startChatRun, composeDaemonSystemPrompt },
     agents: agentDeps,
     critique: critiqueDeps,
     appConfig: { readAppConfig },
     validation: validationDeps,
-    lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
+    lifecycle: lifecycleDeps,
     telemetry: { reportFinalizedMessage, reportFeedback },
   });
 

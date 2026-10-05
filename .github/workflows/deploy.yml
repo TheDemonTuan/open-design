@@ -1,0 +1,105 @@
+name: Build and Deploy OpenDesign
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_deploy:
+        description: "Build image only without deploying to VPS"
+        type: boolean
+        default: false
+
+concurrency:
+  group: opendesign-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Application regression gates
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@a64adb255a40b992f80164c4897f2674e2d20d75 # v3.0.0
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run verification gates
+        run: bash .deploy/verify.sh
+
+  security-source:
+    name: Trivy source security gate
+    permissions:
+      contents: read
+      packages: read
+    uses: TheDemonTuan/vps-deploy/.github/workflows/security-trivy.yml@1be62b824966a7af294403e9b01800c29da4ef03
+    with:
+      app: opendesign
+      source-sha: ${{ github.sha }}
+      platform-ref: 1be62b824966a7af294403e9b01800c29da4ef03
+      config: .deploy/app.yml
+      scan-mode: source
+
+  build:
+    name: Build and smoke immutable image
+    needs:
+      - verify
+      - security-source
+    permissions:
+      contents: read
+      packages: write
+    uses: TheDemonTuan/vps-deploy/.github/workflows/build-docker.yml@1be62b824966a7af294403e9b01800c29da4ef03
+    with:
+      app: opendesign
+      source-sha: ${{ github.sha }}
+      platform-ref: 1be62b824966a7af294403e9b01800c29da4ef03
+      config: .deploy/app.yml
+
+  security-image:
+    name: Trivy immutable image gate
+    needs: build
+    permissions:
+      contents: read
+      packages: read
+    uses: TheDemonTuan/vps-deploy/.github/workflows/security-trivy.yml@1be62b824966a7af294403e9b01800c29da4ef03
+    with:
+      app: opendesign
+      source-sha: ${{ github.sha }}
+      platform-ref: 1be62b824966a7af294403e9b01800c29da4ef03
+      config: .deploy/app.yml
+      scan-mode: image
+      image-ref: ${{ needs.build.outputs.image-ref }}
+      platform: linux/arm64
+
+  deploy:
+    name: Deploy immutable digest
+    needs:
+      - build
+      - security-image
+    if: (github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip deploy]')) || (github.event_name == 'workflow_dispatch' && !inputs.skip_deploy)
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: TheDemonTuan/vps-deploy/.github/actions/deploy@1be62b824966a7af294403e9b01800c29da4ef03
+        with:
+          app: opendesign
+          host: oracle-main
+          operation: deploy
+          component: app
+          source-sha: ${{ github.sha }}
+          platform-ref: 1be62b824966a7af294403e9b01800c29da4ef03
+          config: .deploy/app.yml
+          image-ref: ${{ needs.build.outputs.image-ref }}
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}

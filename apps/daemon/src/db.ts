@@ -57,7 +57,7 @@ import {
 import { migrateStrategyTaskStore } from './strategies/task-store.js';
 import { observeRead } from './services/daemon-health.js';
 
-type SqliteDb = Database.Database;
+export type SqliteDb = Database.Database;
 type DbRow = Record<string, any>;
 type JsonObject = Record<string, unknown>;
 type ChatSessionMode = 'design' | 'chat' | 'plan';

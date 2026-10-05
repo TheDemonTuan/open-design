@@ -267,6 +267,11 @@ export interface ServerContext {
   };
   lifecycle: {
     isDaemonShuttingDown: () => boolean;
+    isMaintenance?: () => boolean;
+    isAccepting?: () => boolean;
+    acquireOperationSync?: () => () => void;
+    withOperation?: <T>(work: () => Promise<T>) => Promise<T>;
+    markProxyStarted?: (turnId: string) => void;
   };
 }
 

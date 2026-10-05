@@ -30,6 +30,10 @@
       "types": "./dist/api/finalize.d.ts",
       "default": "./dist/api/finalize.mjs"
     },
+    "./api/deployment": {
+      "types": "./dist/api/deployment.d.ts",
+      "default": "./dist/api/deployment.mjs"
+    },
     "./api/handoff": {
       "types": "./dist/api/handoff.d.ts",
       "default": "./dist/api/handoff.mjs"

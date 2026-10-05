@@ -174,7 +174,7 @@ function mediaProviderId(model: string): string | undefined {
 const AIHUBMIX_CATALOG_TTL_MS = 5 * 60 * 1000;
 const aihubmixCatalogCache = new Map<string, { at: number; models: Array<{ id: string; label: string }> }>();
 
-export interface RegisterMediaRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'ids' | 'auth' | 'media' | 'appConfig' | 'orbit' | 'nativeDialogs' | 'projectStore' | 'projectFiles' | 'conversations' | 'research'> {
+export interface RegisterMediaRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'ids' | 'auth' | 'media' | 'appConfig' | 'orbit' | 'nativeDialogs' | 'projectStore' | 'projectFiles' | 'conversations' | 'research' | 'lifecycle'> {
   authorizeProjectRequest: AuthorizeProjectRequest;
   authorizeProjectToolRequest: AuthorizeProjectToolRequest;
 }
@@ -300,6 +300,15 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     res: any,
     options: { projectId: string; grant: ToolTokenGrant | null },
   ) => {
+    if (ctx.lifecycle?.isAccepting && !ctx.lifecycle.isAccepting()) {
+      res.setHeader('Retry-After', '30');
+      return sendApiError(
+        res,
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'Design server is in maintenance; retry after deployment.',
+      );
+    }
     const projectId = options.projectId;
     const project = getProject(db, projectId);
     if (!project) return res.status(404).json({ error: 'project not found' });
@@ -360,6 +369,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     };
 
     let task: ReturnType<typeof createMediaTask> | null = null;
+    const releaseOp = ctx.lifecycle?.acquireOperationSync ? ctx.lifecycle.acquireOperationSync() : () => {};
     try {
       const taskId = randomUUID();
       const analyticsContext = await mediaAnalyticsContext(req, options.grant);
@@ -596,6 +606,8 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         reportFailureToRun(task.id, task.error);
       }
       throw err;
+    } finally {
+      releaseOp();
     }
   };
 

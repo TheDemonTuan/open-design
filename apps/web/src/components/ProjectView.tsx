@@ -35,6 +35,11 @@ import {
   reportChatRunFeedback,
   streamViaDaemon,
 } from '../providers/daemon';
+import { streamMessage, type StreamHandlers } from '../providers/anthropic';
+import type { ProxyContext } from '../providers/api-proxy';
+import type { DesignTurnLease } from '@open-design/contracts/api/deployment';
+import { ProjectActionsToolbar } from './ProjectActionsToolbar';
+import { downloadProjectArchive } from '../runtime/exports';
 import {
   type ChatReconnectSignal,
   type ChatReconnectView,
@@ -2821,6 +2826,7 @@ export function ProjectView({
     ttlMs?: number;
     scope?: 'chat-pane';
   } | null>(null);
+  const [downloadingHandoff, setDownloadingHandoff] = useState(false);
   // Brand extraction has no SSE; this polls the brand's status and, once the
   // backing extraction finalizes a `user:<id>` design system, surfaces a
   // one-shot "ready — preview it" prompt so the user knows to open the Design
@@ -10478,6 +10484,86 @@ export function ProjectView({
         const byokHasExistingArtifact = projectFilesRef.current.some(
           (file) => Boolean(file.artifactManifest),
         );
+        if (process.env.NEXT_PUBLIC_OD_DESIGN_SERVER === '1') {
+          let clientTurnLease: DesignTurnLease | null = null;
+          const turnId = crypto.randomUUID();
+          try {
+            const turnRes = await fetch(`/api/projects/${encodeURIComponent(project.id)}/design-turns`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                conversationId: runConversationId,
+                clientTurnId: turnId,
+              }),
+            });
+            if (turnRes.ok) {
+              clientTurnLease = await turnRes.json() as DesignTurnLease;
+            }
+          } catch (turnErr) {
+            console.warn('[design-turn] failed to acquire turn lease:', turnErr);
+          }
+
+          const leaseId = clientTurnLease?.leaseId;
+          const byokContext: ProxyContext = {
+            projectId: project.id,
+            conversationId: runConversationId,
+            sessionMode: runSessionMode,
+            locale,
+            designSystemId: runtimeDesignSystemId ?? undefined,
+            deploymentTurnId: leaseId,
+            workspaceContext: projectRunWorkspaceContext,
+            byokImageModel: byokImageModelOverride,
+            byokVideoModel: byokVideoModelOverride,
+            byokSpeechModel: byokSpeechModelOverride,
+            byokSpeechVoice: byokSpeechVoiceOverride,
+          };
+
+          const wrappedHandlers: StreamHandlers = {
+            onDelta: handlers.onDelta,
+            onDone: async (fullText = '') => {
+              try {
+                await Promise.resolve(handlers.onDone?.(fullText));
+              } finally {
+                if (leaseId) {
+                  try {
+                    await fetch(`/api/projects/${encodeURIComponent(project.id)}/design-turns/${encodeURIComponent(leaseId)}/complete`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                    });
+                  } catch (compErr) {
+                    console.warn('[design-turn] failed to complete turn lease:', compErr);
+                  }
+                }
+              }
+            },
+            onError: async (err: Error) => {
+              try {
+                await Promise.resolve(handlers.onError?.(err));
+              } finally {
+                if (leaseId) {
+                  try {
+                    await fetch(`/api/projects/${encodeURIComponent(project.id)}/design-turns/${encodeURIComponent(leaseId)}/complete`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                    });
+                  } catch (compErr) {
+                    console.warn('[design-turn] failed to complete turn lease:', compErr);
+                  }
+                }
+              }
+            },
+          };
+
+          void streamMessage(
+            config,
+            '',
+            byokOpenCodeHistory,
+            controller.signal,
+            wrappedHandlers,
+            byokContext,
+          );
+          return true;
+        }
         void streamViaDaemon({
           agentId: 'byok-opencode',
           history: byokOpenCodeHistory,
@@ -13255,6 +13341,30 @@ export function ProjectView({
     designMdState.currentArtifact,
     terminalLauncher,
   ]);
+  const handleDownloadHandoff = useCallback(async () => {
+    if (downloadingHandoff) return;
+    setDownloadingHandoff(true);
+    try {
+      const ok = await downloadProjectArchive({
+        projectId: project.id,
+        fallbackTitle: project.name,
+        workspaceContext: projectRunWorkspaceContext,
+      });
+      if (!ok) {
+        setProjectActionsToast({
+          message: 'Handoff download failed; no package was exported.',
+          details: null,
+        });
+      }
+    } catch (err: unknown) {
+      setProjectActionsToast({
+        message: 'Handoff download failed; no package was exported.',
+        details: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setDownloadingHandoff(false);
+    }
+  }, [project.id, project.name, projectRunWorkspaceContext, downloadingHandoff]);
 
   // Defensive: if the conversation already has messages once they
   // hydrate, the pendingPrompt that seeded the composer is stale (the
@@ -13626,9 +13736,14 @@ export function ProjectView({
         enabled={critiqueTheaterEnabled}
         workspaceContext={projectRunWorkspaceContext}
       />
-      {/* ProjectActionsToolbar removed per 00efdcba — hide finalize-design
-          toolbar from project header. Restore from cf1cd9bb if product
-          wants the Finalize + Continue-in-CLI buttons back in the chrome. */}
+      <ProjectActionsToolbar
+        designMdState={designMdState}
+        finalizeStatus={finalize.status}
+        onFinalize={handleFinalize}
+        onCancelFinalize={handleCancelFinalize}
+        onDownloadHandoff={handleDownloadHandoff}
+        downloadingHandoff={downloadingHandoff}
+      />
       <div
         ref={splitRef}
         className={[

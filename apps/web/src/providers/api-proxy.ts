@@ -27,6 +27,11 @@ import { isAnthropicSupportedImagePath } from '../utils/apiProtocol';
  */
 export interface ProxyContext {
   projectId?: string;
+  conversationId?: string;
+  sessionMode?: string;
+  locale?: string;
+  designSystemId?: string;
+  deploymentTurnId?: string;
   /** Exact persisted scope of `projectId`, captured when the turn starts. */
   workspaceContext?: WorkspaceCollabContext | null;
   byokImageModel?: string;
@@ -57,6 +62,9 @@ export async function streamProxyEndpoint(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(context?.deploymentTurnId
+          ? { 'X-OpenDesign-Turn': context.deploymentTurnId }
+          : {}),
         ...(context?.workspaceContext
           ? workspaceProjectHeaders(context.workspaceContext)
           : {}),
@@ -70,6 +78,11 @@ export async function streamProxyEndpoint(
         maxTokens: effectiveMaxTokens(cfg),
         apiVersion: cfg.apiVersion,
         ...(context?.projectId ? { projectId: context.projectId } : {}),
+        ...(context?.conversationId ? { conversationId: context.conversationId } : {}),
+        ...(context?.sessionMode ? { sessionMode: context.sessionMode } : {}),
+        ...(context?.locale ? { locale: context.locale } : {}),
+        ...(context?.designSystemId ? { designSystemId: context.designSystemId } : {}),
+        ...(context?.deploymentTurnId ? { deploymentTurnId: context.deploymentTurnId } : {}),
         ...(context?.byokImageModel
           ? { byokImageModel: context.byokImageModel }
           : {}),
@@ -120,21 +133,21 @@ export async function streamProxyEndpoint(
         }
 
         if (parsed.event === 'error') {
-          handlers.onError(new Error(proxyErrorMessage(parsed.data)));
+          await handlers.onError(new Error(proxyErrorMessage(parsed.data)));
           return;
         }
 
         if (parsed.event === 'end') {
-          handlers.onDone(acc);
+          await handlers.onDone(acc);
           return;
         }
       }
     }
 
-    handlers.onDone(acc);
+    await handlers.onDone(acc);
   } catch (err) {
     if ((err as Error).name === 'AbortError') return;
-    handlers.onError(err instanceof Error ? err : new Error(String(err)));
+    await handlers.onError(err instanceof Error ? err : new Error(String(err)));
   }
 }
 

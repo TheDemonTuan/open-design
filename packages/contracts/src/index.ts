@@ -26,6 +26,16 @@ export * from './api/project-sync.js';
 export * from './api/team-resources.js';
 export * from './api/touchpointOffline.js';
 export * from './api/touchpointTestRuntime.js';
+export {
+  DEPLOYMENT_SCHEMA_VERSION,
+  type DeploymentPhase,
+  type DeploymentFenceRequest,
+  type DeploymentStatus as HostDeploymentStatus,
+  type DesignTurnCreateRequest,
+  type DesignTurnLease,
+  type DesignTurnCompleteRequest,
+  type DesignTurnListResponse,
+} from './api/deployment.js';
 export * from './api/connectionTest.js';
 export * from './api/artifact-focus-marker.js';
 export * from './api/done-marker.js';

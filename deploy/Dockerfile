@@ -33,6 +33,8 @@ RUN corepack enable && \
     pnpm install --frozen-lockfile
 
 COPY apps ./apps
+ENV NEXT_PUBLIC_OD_DESIGN_SERVER=1
+ENV NEXT_PUBLIC_OD_ACCESS_SAFE_PREVIEW=1
 RUN pnpm --filter @open-design/daemon build && \
     pnpm --filter @open-design/web build && \
     pnpm --filter @open-design/daemon deploy --legacy --prod /app/deploy/daemon && \
