@@ -19,14 +19,14 @@ jobs:
     environment: production
     timeout-minutes: 15
     steps:
-      - uses: TheDemonTuan/vps-deploy/.github/actions/deploy@1be62b824966a7af294403e9b01800c29da4ef03
+      - uses: TheDemonTuan/vps-deploy/.github/actions/deploy@840986fe2c98898372ac58de528d1b2606e9c04c
         with:
           app: opendesign
           host: oracle-main
           operation: ${{ inputs.operation }}
           component: app
           source-sha: ${{ github.sha }}
-          platform-ref: 1be62b824966a7af294403e9b01800c29da4ef03
+          platform-ref: 840986fe2c98898372ac58de528d1b2606e9c04c
           config: .deploy/app.yml
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
