@@ -11,7 +11,7 @@ mkdir -p "$LOCAL_BACKUP_DIR"
 chmod 700 "$LOCAL_BACKUP_DIR"
 
 echo "==> Pulling OpenDesign backups from VPS to ${LOCAL_BACKUP_DIR}..."
-rsync -avz --progress --chmod=600 "vps:${REMOTE_BACKUP_DIR}/" "$LOCAL_BACKUP_DIR/"
+rsync -avz --progress --no-p --chmod=D700,F600 "vps:${REMOTE_BACKUP_DIR}/" "$LOCAL_BACKUP_DIR/"
 
 echo "==> Local backups synced successfully:"
 ls -lh "$LOCAL_BACKUP_DIR"
