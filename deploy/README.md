@@ -4,6 +4,30 @@ This deployment ships OpenDesign as a single Alpine-based runtime image. The
 daemon serves both the API and the built Next.js static export, so there is no
 separate nginx container.
 
+## Managed fork deployment proof
+
+The `TheDemonTuan/open-design` deployment uses commit/push to `main` through
+`.github/workflows/deploy.yml`; workstation commands must not mutate the VPS.
+Keep the daemon behind Cloudflare Access, CrowdSec and Traefik with no published
+container ports. Platform activation is separate, protected by `platform-admin`;
+all caller action/workflow refs and `platform-ref` inputs must select the same
+successfully activated immutable platform SHA.
+
+[Run 37427742015](https://github.com/TheDemonTuan/open-design/actions/runs/37427742015)
+deployed application commit `00adbc35dd9c6f9f48e0537bbe0c365252b0571c` with platform
+`806225b42ac720fb9e1af49beb3b2a073563557c`. Regression gates, source/image scans,
+exact-image smoke and digest deployment passed. Read-only production checks
+confirmed image `sha256:5e98fc89728035ad0385c9f76e95f64244af3167dbb7c1deeb026fbbb6c21af2`,
+strict health, matching configured/observed route generation, open admission with
+no operation fence, and empty port bindings. Activation/recovery temporary admin
+secrets were revoked and their absence verified.
+
+This proves deployment, not authenticated provider generation, project persistence
+or finalized ZIP handoff. Those require the production Cloudflare Access session
+and a provider key entered privately through the UI; never retrieve credentials
+from container environment or stored project data to bypass that verification.
+
+
 ## Local compose
 
 Before starting:
