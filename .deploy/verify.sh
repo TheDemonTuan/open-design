@@ -19,7 +19,7 @@ echo "==> Running web typecheck..."
 pnpm --filter @open-design/web typecheck
 
 echo "==> Running CLI-free design and onboarding regressions..."
-pnpm --filter @open-design/web test tests/components/ProjectView.api-empty-response.test.tsx tests/components/EntryShell.onboarding.test.tsx
+pnpm --filter @open-design/web test tests/components/ProjectView.api-empty-response.test.tsx tests/components/EntryShell.onboarding.test.tsx tests/components/assistant-message-byok-display.test.tsx tests/components/DesignFilesBuildingState.test.tsx tests/components/DesignFilesPanel.test.tsx
 
 if [ -f "tests/handoff/test_import_handoff.py" ]; then
   echo "==> Running handoff importer tests..."

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   isPreviewBuildFocusReady,
   parsePreviewBuildFocusResult,
@@ -13,14 +13,17 @@ import { projectRawUrl } from '../../providers/registry';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 import type { ProjectFile } from '../../types';
 import type { RunProgressStep } from '../../runtime/run-progress';
+import { buildSrcdoc } from '../../runtime/srcdoc';
 import { RunStepFeed } from './RunStepFeed';
 import { stepLabel } from './run-step-label';
 import styles from './DesignFilesBuildingState.module.css';
 
 interface Props {
   projectId: string;
-  /** The page being built — see `selectBuildPreviewHtmlEntry`. */
-  file: ProjectFile;
+  /** The materialized page being built, if the turn has written one. */
+  file: ProjectFile | null;
+  /** HTML streamed before a file exists; never used for a materialized page. */
+  liveHtml?: string;
   /** Bumped on every coalesced `file-changed` batch; part of the cache bust. */
   filesRefreshKey: number;
   /** The running turn's tool calls, newest first. */
@@ -51,9 +54,9 @@ const SECTION_DWELL_MS = 1200;
  * showed the starter CTAs; after the first file landed, the pane jumped
  * straight to a grid of file cards. Neither showed the artifact taking shape.
  *
- * The frame is a real URL-load preview of the file on disk, reloaded on each
- * settled write (the daemon's watcher already debounces the write, and the host
- * coalesces the events, so this does not thrash).
+ * Materialized pages use a real URL-load preview, reloaded on settled writes.
+ * Before that, streamed HTML uses the existing srcdoc renderer in the same
+ * opaque-origin sandbox. It does not create a file or offer file actions.
  *
  * The way back to the file grid is the topbar's preview switch
  * (`BuildPreviewToggle`), not a button on top of the page — see that component
@@ -78,6 +81,7 @@ const SECTION_DWELL_MS = 1200;
 export function DesignFilesBuildingState({
   projectId,
   file,
+  liveHtml,
   filesRefreshKey,
   steps,
   workspaceContext,
@@ -94,15 +98,25 @@ export function DesignFilesBuildingState({
   const anchor = current?.anchor ?? null;
 
   const src = useMemo(
-    () =>
-      appendResourceQuery(
-        projectRawUrl(projectId, file.name, workspaceContext),
-        // `v` is the established mtime bust; `fr` is the necessary second half —
-        // an agent can rewrite the same file twice inside one filesystem mtime
-        // tick, and the refresh key moves on every coalesced change batch.
-        `v=${Math.round(file.mtime)}&fr=${filesRefreshKey}&odPreviewBridge=buildfocus`,
-      ),
-    [projectId, file.name, file.mtime, filesRefreshKey, workspaceContext],
+    () => file
+      ? appendResourceQuery(
+          projectRawUrl(projectId, file.name, workspaceContext),
+          // `v` is the established mtime bust; `fr` also catches two writes
+          // within one filesystem mtime tick.
+          `v=${Math.round(file.mtime)}&fr=${filesRefreshKey}&odPreviewBridge=buildfocus`,
+        )
+      : undefined,
+    [projectId, file?.name, file?.mtime, filesRefreshKey, workspaceContext],
+  );
+  const deferredLiveHtml = useDeferredValue(file ? undefined : liveHtml);
+  const srcDoc = useMemo(
+    () => !file && deferredLiveHtml
+      ? buildSrcdoc(deferredLiveHtml, {
+          baseHref: projectRawUrl(projectId, '', workspaceContext),
+          previewFocusGuard: true,
+        })
+      : undefined,
+    [file, deferredLiveHtml, projectId, workspaceContext],
   );
 
   const request = useCallback((text: string | null, section: string | null) => {
@@ -120,8 +134,10 @@ export function DesignFilesBuildingState({
   // A different page means a different set of parts; nothing carries over.
   useEffect(() => {
     seenSectionsRef.current = new Set();
+    setFocus(null);
+    requestIdRef.current = null;
     setWalk(null);
-  }, [projectId, file.name]);
+  }, [projectId, file?.name]);
 
   // A new step means a new place to point at; the frame keeps its document.
   // A tour of the parts that just landed owns the cursor while it runs.
@@ -202,10 +218,11 @@ export function DesignFilesBuildingState({
     <div className={styles.stage} data-testid="design-files-building">
       <iframe
         ref={frameRef}
-        key={`${projectId}:${file.name}`}
+        key={`${projectId}:${file?.name ?? 'streamed-html'}`}
         className={styles.frame}
         src={src}
-        title=""
+        srcDoc={srcDoc}
+        title={file?.name ?? t('designFiles.buildingPreview')}
         // No `allow-same-origin`: this is generated, untrusted markup and the
         // host needs nothing from it but postMessage.
         sandbox="allow-scripts"
@@ -240,7 +257,7 @@ export function DesignFilesBuildingState({
           repeating the step in both places would say one thing twice. */}
       <div className={styles.dock}>
         <p className={styles.dockCaption} role="status">
-          {file.name}
+          {file?.name ?? t('designFiles.buildingPreview')}
         </p>
         <RunStepFeed running steps={steps} className={styles.dockFeed} />
       </div>
