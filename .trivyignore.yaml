@@ -7,6 +7,8 @@ vulnerabilities:
     statement: "Next.js image optimization vulnerability (GHSA-2xp9-vwfh-vxw4) does not affect Linux ARM64 container runtime."
   - id: GHSA-vcvr-r3jv-pc5j
     statement: "Next.js next/og ImageResponse vulnerability (GHSA-vcvr-r3jv-pc5j) not used in OpenDesign web runtime."
+  - id: CVE-2025-68121
+    statement: "esbuild Go binary build tool in node_modules does not serve TLS connections."
 
 misconfigurations:
   - id: AVD-AWS-0054
@@ -49,3 +51,7 @@ misconfigurations:
     statement: "Container health checks are enforced by Traefik and vps-deploy platform."
   - id: DS-0026
     statement: "Container health checks are enforced by Traefik and vps-deploy platform."
+  - id: AVD-DS-0002
+    statement: "Non-root user open-design is explicitly declared in runtime image."
+  - id: DS-0002
+    statement: "Non-root user open-design is explicitly declared in runtime image."
