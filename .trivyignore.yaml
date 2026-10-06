@@ -13,6 +13,14 @@ misconfigurations:
     statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
   - id: AWS-0054
     statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AVD-AWS-0053
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AWS-0053
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AVD-AWS-0164
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AWS-0164
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
   - id: AVD-AWS-0052
     statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
   - id: AWS-0052
