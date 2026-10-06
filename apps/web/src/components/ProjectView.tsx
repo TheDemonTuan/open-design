@@ -10520,7 +10520,10 @@ export function ProjectView({
           };
 
           const wrappedHandlers: StreamHandlers = {
-            onDelta: handlers.onDelta,
+            onDelta: (delta) => {
+              handlers.onDelta(delta);
+              textBuffer.appendEvent({ kind: 'text', text: delta });
+            },
             onDone: async (fullText = '') => {
               try {
                 await Promise.resolve(handlers.onDone?.(fullText));

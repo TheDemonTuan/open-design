@@ -1226,3 +1226,29 @@ describe("building preview", () => {
     expect(screen.queryByTestId("design-files-preview-toggle")).toBeNull();
   });
 });
+
+describe('DesignFilesPanel direct BYOK streamed HTML', () => {
+  afterEach(() => cleanup());
+
+  it('shows output before a file exists without inventing an openable file', () => {
+    const { container, onOpenFile } = renderPanel([], {
+      running: true,
+      runStartedAt: 1_000,
+      liveHtml: '<!DOCTYPE html><html><body><h1>Research response marker</h1></body></html>',
+    });
+    const preview = screen.getByTestId('design-files-building');
+    expect(preview.querySelector('iframe')?.getAttribute('srcdoc')).toContain('Research response marker');
+    expect(container.querySelector('[data-testid^="design-file-row-"]')).toBeNull();
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
+  it('does not keep a stale streamed preview after the turn stops', () => {
+    renderPanel([], {
+      running: false,
+      runStartedAt: 1_000,
+      liveHtml: '<html><body><h1>Stale stream marker</h1></body></html>',
+    });
+    expect(screen.queryByTestId('design-files-building')).toBeNull();
+    expect(screen.getByTestId('design-files-empty')).toBeTruthy();
+  });
+});

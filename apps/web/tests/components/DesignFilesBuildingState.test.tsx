@@ -91,6 +91,32 @@ afterEach(() => {
 });
 
 describe('DesignFilesBuildingState', () => {
+  it('previews unmaterialized HTML in an opaque sandbox, then hands off to the real file', () => {
+    const html = '<!DOCTYPE html><html><body><h1>Research response marker</h1></body></html>';
+    const view = renderState({ file: null, liveHtml: html, steps: [] });
+    const liveFrame = view.container.querySelector('iframe')!;
+    expect(liveFrame.getAttribute('src')).toBeNull();
+    expect(liveFrame.getAttribute('srcdoc')).toContain('<h1>Research response marker</h1>');
+    expect(liveFrame.getAttribute('sandbox')?.split(' ')).not.toContain('allow-same-origin');
+
+    view.rerender(
+      <I18nProvider initial="zh-CN">
+        <DesignFilesBuildingState
+          projectId="p1"
+          file={file()}
+          liveHtml={html}
+          filesRefreshKey={8}
+          steps={[]}
+          workspaceContext={null}
+        />
+      </I18nProvider>,
+    );
+    const fileFrame = view.container.querySelector('iframe')!;
+    expect(fileFrame.getAttribute('srcdoc')).toBeNull();
+    expect(fileFrame.getAttribute('src')).toContain('/api/projects/p1/raw/index.html');
+    expect(fileFrame.getAttribute('src')).toContain('fr=8');
+  });
+
   it('previews the real file, busting on BOTH the mtime and the refresh key', () => {
     const { container } = renderState();
     const frame = container.querySelector('iframe');

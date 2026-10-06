@@ -1394,6 +1394,7 @@ export function FileWorkspace({
   onActiveContextChange,
   onWorkspaceContextsChange,
   messages = [],
+  artifactHtml,
   conversationId,
   fileActionsBefore,
   headerActions,
@@ -4384,6 +4385,7 @@ export function FileWorkspace({
             running={runInFlight}
             runStartedAt={runStartedAt}
             runSteps={runSteps}
+            liveHtml={runInFlight ? artifactHtml ?? undefined : undefined}
             files={visibleFiles}
             folders={projectFolders}
             liveArtifacts={liveArtifactEntries}

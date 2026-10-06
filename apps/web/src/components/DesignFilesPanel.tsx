@@ -87,6 +87,8 @@ interface Props {
   /** The running turn's tool calls, newest first. The building preview names
    *  the first one as the current step and logs the rest beneath it. */
   runSteps?: RunProgressStep[];
+  /** Streamed HTML, before the current turn has materialized a file. */
+  liveHtml?: string;
   files: ProjectFile[];
   // Persisted folders from `/api/projects/:id/folders`, including empty ones
   // that no file lives under. Without these, a folder only appears once a file
@@ -474,6 +476,7 @@ export function DesignFilesPanel({
   running = false,
   runStartedAt,
   runSteps,
+  liveHtml,
   files,
   folders,
   liveArtifacts,
@@ -519,6 +522,10 @@ export function DesignFilesPanel({
     () => (buildPreviewName ? files.find((file) => file.name === buildPreviewName) ?? null : null),
     [buildPreviewName, files],
   );
+  // A real current-turn file is authoritative as soon as it lands. Never use
+  // streamed markup to masquerade as a ProjectFile or overwrite its preview.
+  const buildPreviewHtml = running && !buildPreviewFile && liveHtml ? liveHtml : undefined;
+  const hasBuildPreview = running && (buildPreviewFile !== null || buildPreviewHtml !== undefined);
   // A long run must not trap the user away from their files. The topbar's
   // preview switch flips this both ways; it resets when the next run starts.
   const [buildPreviewDismissed, setBuildPreviewDismissed] = useState(false);
@@ -1496,11 +1503,9 @@ export function DesignFilesPanel({
         <div className="df-topbar">
           <div className="df-topbar-left">{breadcrumbs}</div>
           <div className="df-topbar-right">
-            {/* Only while there is something to preview: a run in flight that
-                has already written a page. Outside that window the pane has
-                one view, and a switch with nothing on its other side would be
-                a control that does nothing. */}
-            {buildPreviewFile && running ? (
+            {/* Only while the active turn has a written page or streamed HTML
+                to preview. The toggle still lets the user return to files. */}
+            {hasBuildPreview ? (
               <BuildPreviewToggle
                 checked={!buildPreviewDismissed}
                 onChange={(next) => setBuildPreviewDismissed(!next)}
@@ -1590,15 +1595,14 @@ export function DesignFilesPanel({
               </div>
             </div>
           ) : null}
-          {buildPreviewFile && running && !buildPreviewDismissed ? (
-            /* The middle state: a page exists but the run is still writing it.
-               Watching it take shape beats a grid of file cards whose only news
-               is that a file appeared. Falls back to the grid the moment the run
-               ends, or when the topbar's preview switch is turned off. */
+          {hasBuildPreview && !buildPreviewDismissed ? (
+            /* Watch the current turn take shape, even before a file exists.
+               Completion or dismissing the preview returns to the file grid. */
             <div className="df-empty" data-testid="design-files-building-host">
               <DesignFilesBuildingState
                 projectId={projectId}
                 file={buildPreviewFile}
+                liveHtml={buildPreviewHtml}
                 filesRefreshKey={filesRefreshKey ?? 0}
                 steps={runSteps ?? []}
                 workspaceContext={workspaceContext}
@@ -1614,7 +1618,7 @@ export function DesignFilesPanel({
               </div>
             </div>
           ) : null}
-          {buildPreviewFile && running && !buildPreviewDismissed ? null
+          {hasBuildPreview && !buildPreviewDismissed ? null
           : files.length === 0 && liveArtifacts.length === 0 && (folders?.length ?? 0) === 0 && filesAuthoritative ? (
             downloadPending ? (
               // A shared project whose local mirror has not caught up yet

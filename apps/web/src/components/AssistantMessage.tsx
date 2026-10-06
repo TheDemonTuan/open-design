@@ -468,12 +468,15 @@ function AssistantMessageImpl({
   // execution shell (`components/chat/ExecutionShell.tsx`), which builds its own
   // link handler, so that memo has no consumer left and is deliberately dropped
   // rather than carried as an unused binding.
-  const events =
-    (message.events?.length ?? 0) > 0
-      ? message.events!
-      : message.content.trim()
-        ? ([{ kind: "text", text: message.content }] satisfies AgentEvent[])
-        : [];
+  const events = useMemo<AgentEvent[]>(() => {
+    const persisted = message.events ?? [];
+    // Direct BYOK historically persisted content alongside status-only events.
+    // Status metadata must not hide that content; structured event streams remain authoritative.
+    if (message.content.trim() && persisted.every((event) => event.kind === 'status')) {
+      return [...persisted, { kind: 'text', text: message.content }];
+    }
+    return persisted;
+  }, [message.events, message.content]);
   const displayEvents = useMemo(
     () => dedupeToolUsesById(dropSupersededInFlightToolUses(events)),
     [events],
@@ -519,9 +522,9 @@ function AssistantMessageImpl({
    *
    * 三条都不是 `message.runStatus` 自己说得清的:
    *  · **还在流** → 一定是 running,不管落库里写的是什么;
-   *  · **不流了但没有 runStatus** → 历史/遗留消息。它已经结束了,只是没人给它盖过章。
-   *    当成 running 的话壳永远转下去,而且 D43 的兜底(结论提到壳外)不会触发 ——
-   *    整段回答会被关在壳里,`<od-card>` 这类交互块跟着一起消失。
+   *  · **不流了但没有 runStatus** → 用结束布局释放正文、停止壳内动画,不证明成功。
+   *    当成 running 会让壳永远转下去、阻止 D43 的结论兜底。
+   *    缺终态证据的快照由 `hasUnconfirmedCompletion` 隐藏 footer 成功标签。
    *  · **产物没送达**(`no_result` / `delivery_failed`)→ 用户视角就是这一轮失败了,
    *    与老链路的 `runFailed` 判据保持一致;失败原因交给下面的报错卡(B18)。
    *
@@ -1112,6 +1115,11 @@ function AssistantMessageImpl({
    */
   const failedTurnIsAnnouncedByTheShell =
     message.runStatus === "failed" && !hasEmptyResponse;
+  const hasUnconfirmedCompletion = !streaming && (
+    message.runStatus
+      ? !isTerminalRunStatus(message.runStatus)
+      : message.endedAt == null
+  );
   /**
    * 这一行要不要报「这一轮怎么样了」。
    *
@@ -1120,7 +1128,7 @@ function AssistantMessageImpl({
    * 也丢了」。运行中的去重已经由 `showCompletionRow` 整行不出来解决,不归这里管。
    * 所以这里只列**具名的例外**,一条都不能凭「看起来重复」加进来。
    *
-   * 四条例外:
+   * 五条例外:
    *  ① 报错卡那一轮 —— 原因和下一步由报错卡说,这一行让位;
    *  ② 问卷还悬着的那一轮 —— run 进程上确实终止了,但握手没完成;挂绿勾会把它变成
    *     假成功,回放老式子标签表单时尤其明显;
@@ -1128,6 +1136,7 @@ function AssistantMessageImpl({
    *     组件,给它挂「已完成」是在陈述一件没发生过的事,读起来就是又一轮 ——
    *     工单 OPEND-2745 里那「两个进行中」正是同一条判据缺口的另一面。
    *  ④ **整轮失败的那一轮**(判据见下面 `failedTurnIsAnnouncedByTheShell`)。
+   *  ⑤ 没有终态证据的历史快照。页面不再 streaming 不等于 provider 已完成。
    *
    * 复制、时间这些**照旧**:它们说的是这段内容本身,不是某一轮的结果。
    */
@@ -1135,7 +1144,8 @@ function AssistantMessageImpl({
     message.id === errorCardOwnerId
     || hasPendingQuestionForm
     || assistantMessageNeverHadARun(message)
-    || failedTurnIsAnnouncedByTheShell;
+    || failedTurnIsAnnouncedByTheShell
+    || hasUnconfirmedCompletion;
   // "Next step" is a delivery affordance, not a generic terminal-state card.
   // Keep it out of pure Q&A, failures/cancellations and incomplete Todo turns;
   // only a successful turn that actually produced something may surface it.
