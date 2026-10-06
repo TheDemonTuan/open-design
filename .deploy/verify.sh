@@ -18,6 +18,9 @@ pnpm --filter @open-design/daemon build
 echo "==> Running web typecheck..."
 pnpm --filter @open-design/web typecheck
 
+echo "==> Running CLI-free design and onboarding regressions..."
+pnpm --filter @open-design/web test tests/components/ProjectView.api-empty-response.test.tsx tests/components/EntryShell.onboarding.test.tsx
+
 if [ -f "tests/handoff/test_import_handoff.py" ]; then
   echo "==> Running handoff importer tests..."
   python3 -m unittest discover -s tests/handoff -p 'test_*.py' -v

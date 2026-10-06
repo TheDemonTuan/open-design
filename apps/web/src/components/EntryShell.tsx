@@ -4029,16 +4029,11 @@ function OnboardingView({
             </div>
           </div>
           <div className="onboarding-view__actions">
-            {amrLoginError ? (
-              <span className="onboarding-view__action-status is-error" role="alert">
-                {amrLoginError}
-              </span>
-            ) : null}
             <button
               type="button"
               className={`onboarding-view__primary${connectGateTooltip ? ' od-tooltip' : ''}`}
               onClick={handlePrimaryAction}
-              disabled={amrLoginPending || amrLoginCancelPending || continuePending}
+              disabled={continuePending}
               aria-disabled={connectStepBlocked || undefined}
               aria-busy={continuePending || undefined}
               data-tooltip={connectGateTooltip ?? undefined}

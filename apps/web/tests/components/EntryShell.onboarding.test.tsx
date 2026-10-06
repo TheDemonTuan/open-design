@@ -1777,6 +1777,94 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect(screen.queryByText('Signing in…')).toBeNull();
   });
 
+  it.each([200, 401])('isolates missing Vela Cloud errors from API Key setup and validates provider status %i', async (providerStatus) => {
+    const cloudError = 'Vela CLI not found: vela';
+    let releaseProviderTest!: (response: Response) => void;
+    const providerTest = new Promise<Response>((resolve) => {
+      releaseProviderTest = resolve;
+    });
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        return jsonResponse({ loggedIn: false, profile: 'prod', user: null, configPath: '/x' });
+      }
+      if (url.endsWith('/api/integrations/vela/login') && init?.method === 'POST') {
+        return jsonResponse({ error: cloudError }, 500);
+      }
+      if (url.endsWith('/api/test/connection') && init?.method === 'POST') {
+        expect(JSON.parse(String(init.body))).toMatchObject({
+          mode: 'provider',
+          protocol: 'openai',
+          apiKey: 'test-api-key',
+          baseUrl: 'https://custom-provider.example/v1',
+          model: 'custom/design-model',
+        });
+        return providerTest;
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    const props = renderOnboarding({
+      agents: [],
+      config: baseConfig({
+        apiProtocol: 'openai',
+        baseUrl: 'https://custom-provider.example/v1',
+        apiProviderBaseUrl: null,
+        model: 'custom/design-model',
+      }),
+    });
+
+    await clickCloudSignIn();
+    expect(await screen.findByRole('alert')).toHaveTextContent(cloudError);
+
+    fireEvent.click(screen.getByRole('button', { name: /API Key/i }));
+    expect(await screen.findByRole('heading', { name: 'Bring Your Own Key' })).toBeTruthy();
+    expect(screen.queryByText(cloudError)).toBeNull();
+    const blockedContinue = screen.getByRole('button', { name: /^Continue$/i });
+    expect(blockedContinue).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(blockedContinue);
+    expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/test/connection'))).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(cloudError);
+    fireEvent.click(screen.getByRole('button', { name: /API Key/i }));
+    expect(screen.queryByText(cloudError)).toBeNull();
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'test-api-key' } });
+    const continueButton = screen.getByRole('button', { name: /^Continue$/i });
+    expect(continueButton).not.toBeDisabled();
+    expect(continueButton.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(continueButton);
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/test/connection'))).toHaveLength(1);
+    });
+    expect(continueButton).toBeDisabled();
+    expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
+
+    await act(async () => {
+      releaseProviderTest(jsonResponse(providerStatus === 200
+        ? { ok: true, kind: 'success', latencyMs: 12, model: 'custom/design-model', sample: 'Connected' }
+        : { ok: false, kind: 'auth_failed', latencyMs: 12, model: 'custom/design-model', status: 401 }));
+    });
+
+    if (providerStatus === 200) {
+      await waitFor(() => expect(props.onCompleteOnboarding).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(props.onConfigPersist).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: 'api',
+        apiProtocol: 'openai',
+        baseUrl: 'https://custom-provider.example/v1',
+        model: 'custom/design-model',
+      });
+    } else {
+      expect(await screen.findByText('Authentication failed. Check your API key.')).toBeTruthy();
+      expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
+      expect(screen.getByRole('heading', { name: 'Bring Your Own Key' })).toBeTruthy();
+      expect(continueButton).not.toBeDisabled();
+    }
+    expect(screen.queryByText(cloudError)).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/integrations/vela/login'))).toHaveLength(1);
+  });
+
   it('clears AMR login pending when canceled and allows a fresh sign-in attempt', async () => {
     const fetchMock = vi.fn(async (input, init) => {
       const url = String(input);

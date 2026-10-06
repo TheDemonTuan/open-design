@@ -5,6 +5,7 @@ import { useLayoutEffect, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProjectView } from '../../src/components/ProjectView';
+import { streamMessage } from '../../src/providers/anthropic';
 import { streamViaDaemon } from '../../src/providers/daemon';
 import type { DaemonStreamOptions } from '../../src/providers/daemon';
 import {
@@ -232,6 +233,7 @@ vi.mock('../../src/components/ChatPane', () => ({
 }));
 
 const mockedStreamViaDaemon = vi.mocked(streamViaDaemon);
+const mockedStreamMessage = vi.mocked(streamMessage);
 const mockedFetchProjectFilePreview = vi.mocked(fetchProjectFilePreview);
 const mockedFetchProjectFileText = vi.mocked(fetchProjectFileText);
 const mockedFetchProjectFiles = vi.mocked(fetchProjectFiles);
@@ -278,12 +280,13 @@ function renderProjectView(
       models: [],
     } as AgentInfo,
   ],
+  renderConfig: AppConfig = config,
 ) {
   return render(
     <ProjectView
       project={renderProject}
       routeFileName={null}
-      config={config}
+      config={renderConfig}
       agents={agents}
       skills={[] as SkillSummary[]}
       designTemplates={[] as SkillSummary[]}
@@ -305,6 +308,8 @@ function renderProjectView(
 
 describe('ProjectView API empty response handling', () => {
   beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_OD_DESIGN_SERVER', '');
+    mockedStreamMessage.mockReset();
     chatPaneMockState.attachments = [];
     chatPaneMockState.commentAttachments = [];
     chatPaneMockState.fireResizeObserverOnFocusedLayout = false;
@@ -334,6 +339,7 @@ describe('ProjectView API empty response handling', () => {
     cleanup();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it('marks an empty API completion as a soft no-output state instead of succeeded', async () => {
@@ -395,15 +401,6 @@ describe('ProjectView API empty response handling', () => {
         return message.role === 'user' && message.content === 'Create a login page';
       }),
     ).toHaveLength(1);
-  });
-
-  it('renders the workspace without the removed project action toolbar', async () => {
-    renderProjectView();
-
-    expect(screen.getByTestId('file-workspace')).toBeTruthy();
-    expect(screen.queryByRole('toolbar', { name: 'Project actions' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Finalize design package' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Continue in CLI' })).toBeNull();
   });
 
   it('keeps an empty project workspace visible across repeated chat collapse cycles', async () => {
@@ -613,25 +610,71 @@ describe('ProjectView API empty response handling', () => {
     expect(userMessage?.content).toContain('Second line');
   });
 
-  it('fails BYOK API sends before daemon routing when OpenCode is unavailable', async () => {
-    const fetchMock = vi.fn(async () => Response.json({}));
-    vi.stubGlobal('fetch', fetchMock);
-    renderProjectView(project, [
-      {
-        id: 'byok-opencode',
-        name: 'BYOK OpenCode',
-        bin: 'opencode',
-        available: false,
-        models: [],
-      } as AgentInfo,
-    ]);
+  it.each([
+    ['missing', []],
+    ['unavailable', [{
+      id: 'byok-opencode',
+      name: 'BYOK OpenCode',
+      bin: 'opencode',
+      available: false,
+      models: [],
+    } as AgentInfo]],
+  ] as const)('persists a direct BYOK design with %s OpenCode on a design server', async (_availability, agents) => {
+    vi.stubEnv('NEXT_PUBLIC_OD_DESIGN_SERVER', '1');
+    const directConfig: AppConfig = {
+      ...config,
+      baseUrl: 'https://custom-provider.example/v1',
+      apiProviderBaseUrl: null,
+      model: 'custom/design-model',
+    };
+    const html = '<!doctype html><html><head><title>Design smoke card</title></head><body><main><h1>Design smoke card</h1><p>A generated design persisted from the direct API response.</p></main></body></html>';
+    const artifact = `<artifact identifier="landing-page" type="text/html" title="Design smoke card">${html}</artifact>`;
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({})));
+    mockedStreamMessage.mockImplementation(async (_config, _system, _history, _signal, handlers) => {
+      handlers.onDelta(artifact);
+      await handlers.onDone(artifact);
+    });
+    renderProjectView(project, [...agents], directConfig);
 
     await sendTestPrompt();
 
-    await waitFor(() =>
-      expect(screen.getAllByText(/BYOK API runs require OpenCode/i).length).toBeGreaterThan(0),
+    await waitFor(() => {
+      expect(mockedWriteProjectTextFile).toHaveBeenCalledWith(
+        project.id,
+        'landing-page.html',
+        expect.stringContaining(html),
+        expect.anything(),
+        null,
+      );
+      expect(hasSavedAssistantMessage((message) => message.runStatus === 'succeeded')).toBe(true);
+    });
+    expect(hasSavedAssistantMessage((message) => message.runStatus === 'failed')).toBe(false);
+    expect(mockedStreamMessage).toHaveBeenCalledWith(
+      directConfig,
+      '',
+      expect.any(Array),
+      expect.any(AbortSignal),
+      expect.any(Object),
+      expect.objectContaining({ projectId: project.id }),
     );
     expect(mockedStreamViaDaemon).not.toHaveBeenCalled();
+    expect(screen.getByTestId('file-workspace').dataset.openRequestName).toBe('landing-page.html');
+  });
+
+  it.each(['', '0'])('fails BYOK API sends without OpenCode when the design-server flag is %j', async (flag) => {
+    vi.stubEnv('NEXT_PUBLIC_OD_DESIGN_SERVER', flag);
+    const fetchMock = vi.fn(async () => Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+    renderProjectView(project, []);
+
+    await sendTestPrompt();
+
+    await waitFor(() => {
+      expect(hasSavedAssistantMessage((message) => message.runStatus === 'failed')).toBe(true);
+    });
+    expect(mockedStreamViaDaemon).not.toHaveBeenCalled();
+    expect(mockedStreamMessage).not.toHaveBeenCalled();
+    expect(mockedWriteProjectTextFile).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalledWith(
       '/api/memory/extract',
       expect.any(Object),

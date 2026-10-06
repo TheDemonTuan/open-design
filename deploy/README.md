@@ -92,6 +92,24 @@ The image intentionally does not bundle Claude/Codex/Gemini CLI binaries. Keep
 those outside the image, or build a separate private runtime layer if a server
 deployment needs local code-agent CLIs installed in the container.
 
+### API-only design servers
+
+The design-server image builds the web runtime with
+`NEXT_PUBLIC_OD_DESIGN_SERVER=1`. API mode uses the existing provider proxy
+without requiring OpenCode or Vela; desktop API mode without this build flag
+retains its OpenCode requirement.
+
+From onboarding, choose **API Key**, select **OpenAI** for an OpenAI-compatible
+endpoint, and enter the custom provider URL, model, and provider-issued API key.
+Fetch models and test the connection before continuing. Cloud sign-in errors
+remain on the Cloud screen and do not block independent API Key setup; invalid
+provider credentials still fail validation.
+
+After previewing and revising the design, use **Finalize design package** and
+then **Download handoff ZIP**. The finalized package, including `DESIGN.md`, is
+a visual reference for adapting production code, not permission to overwrite
+production source.
+
 ## Linux: mounting host agent CLIs
 
 On Linux you can mount host-installed agent CLIs (Claude Code, opencode, Codex,

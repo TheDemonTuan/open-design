@@ -10412,11 +10412,12 @@ export function ProjectView({
         });
         return true;
       } else {
+        const useDirectByok = process.env.NEXT_PUBLIC_OD_DESIGN_SERVER === '1';
         if (config.apiProtocol === 'bedrock') {
           handlers.onError(new Error(BEDROCK_BYOK_UNSUPPORTED_MESSAGE));
           return true;
         }
-        if (!agentsById.get('byok-opencode')?.available) {
+        if (!useDirectByok && !agentsById.get('byok-opencode')?.available) {
           handlers.onError(new Error(BYOK_OPENCODE_UNAVAILABLE_MESSAGE));
           return true;
         }
@@ -10484,7 +10485,7 @@ export function ProjectView({
         const byokHasExistingArtifact = projectFilesRef.current.some(
           (file) => Boolean(file.artifactManifest),
         );
-        if (process.env.NEXT_PUBLIC_OD_DESIGN_SERVER === '1') {
+        if (useDirectByok) {
           let clientTurnLease: DesignTurnLease | null = null;
           const turnId = crypto.randomUUID();
           try {
