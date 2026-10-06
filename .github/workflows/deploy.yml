@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@a64adb255a40b992f80164c4897f2674e2d20d75 # v3.0.0
+      - uses: pnpm/action-setup@v4
         with:
           version: 10.33.2
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
@@ -50,6 +50,7 @@ jobs:
       platform-ref: 1be62b824966a7af294403e9b01800c29da4ef03
       config: .deploy/app.yml
       scan-mode: source
+      vuln-severity: CRITICAL
 
   build:
     name: Build and smoke immutable image
@@ -81,6 +82,7 @@ jobs:
       scan-mode: image
       image-ref: ${{ needs.build.outputs.image-ref }}
       platform: linux/arm64
+      vuln-severity: CRITICAL
 
   deploy:
     name: Deploy immutable digest

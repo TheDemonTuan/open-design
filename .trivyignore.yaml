@@ -1,0 +1,39 @@
+# Trivy ignore rules for OpenDesign deployment
+# Linux container deployment with Traefik edge ingress and vps-deploy
+vulnerabilities:
+  - id: CVE-2026-75604
+    statement: "Next.js Windows-only RCE (CVE-2026-75604) does not affect Linux ARM64 container runtime."
+
+misconfigurations:
+  - id: AVD-AWS-0054
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AWS-0054
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AVD-AWS-0052
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AWS-0052
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AVD-AWS-0017
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AWS-0017
+    statement: "Upstream AWS CloudFormation templates in deploy/aws are unused in VPS deployment."
+  - id: AVD-KSV-0014
+    statement: "Upstream Kubernetes manifests are unused in VPS deployment."
+  - id: KSV-0014
+    statement: "Upstream Kubernetes manifests are unused in VPS deployment."
+  - id: AVD-KSV-01010
+    statement: "Upstream Kubernetes manifests are unused in VPS deployment."
+  - id: KSV-01010
+    statement: "Upstream Kubernetes manifests are unused in VPS deployment."
+  - id: AVD-KSV-0011
+    statement: "Upstream Kubernetes manifests are unused in VPS deployment."
+  - id: KSV-0011
+    statement: "Upstream Kubernetes manifests are unused in VPS deployment."
+  - id: AVD-DS-0001
+    statement: "Upstream Dockerfile templates are unused in recreate container."
+  - id: DS-0001
+    statement: "Upstream Dockerfile templates are unused in recreate container."
+  - id: AVD-DS-0026
+    statement: "Container health checks are enforced by Traefik and vps-deploy platform."
+  - id: DS-0026
+    statement: "Container health checks are enforced by Traefik and vps-deploy platform."
