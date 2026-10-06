@@ -96,7 +96,8 @@ describe('DesignFilesBuildingState', () => {
     const view = renderState({ file: null, liveHtml: html, steps: [] });
     const liveFrame = view.container.querySelector('iframe')!;
     expect(liveFrame.getAttribute('src')).toBeNull();
-    expect(liveFrame.getAttribute('srcdoc')).toContain('<h1>Research response marker</h1>');
+    const previewDocument = new DOMParser().parseFromString(liveFrame.getAttribute('srcdoc') ?? '', 'text/html');
+    expect(previewDocument.querySelector('h1')?.textContent).toBe('Research response marker');
     expect(liveFrame.getAttribute('sandbox')?.split(' ')).not.toContain('allow-same-origin');
 
     view.rerender(
