@@ -8315,11 +8315,6 @@ export async function startServer({
   registerWhatsNewRoutes(app, {
     whatsNew: createWhatsNewService(),
   });
-  registerDeploymentRoutes(app, {
-    db,
-    deploymentLifecycle,
-    authorizeProjectRequest,
-  });
 
   registerPluginEventRoutes(app, {
     http: { requireLocalDaemonRequest, sendApiError },
@@ -8411,6 +8406,11 @@ export async function startServer({
     isProjectUnmaterializedPlaceholder: (_db, projectId) =>
       projectIsUnmaterializedSharedPlaceholder(projectId),
     sendApiError,
+  });
+  registerDeploymentRoutes(app, {
+    db,
+    deploymentLifecycle,
+    authorizeProjectRequest,
   });
   // Legacy registrars still receive the historical bound mutation-gate shape,
   // but production delegates it to the same central authorizer as newer route
