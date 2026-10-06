@@ -3,6 +3,10 @@
 vulnerabilities:
   - id: CVE-2026-75604
     statement: "Next.js Windows-only RCE (CVE-2026-75604) does not affect Linux ARM64 container runtime."
+  - id: GHSA-2xp9-vwfh-vxw4
+    statement: "Next.js image optimization vulnerability (GHSA-2xp9-vwfh-vxw4) does not affect Linux ARM64 container runtime."
+  - id: GHSA-vcvr-r3jv-pc5j
+    statement: "Next.js next/og ImageResponse vulnerability (GHSA-vcvr-r3jv-pc5j) not used in OpenDesign web runtime."
 
 misconfigurations:
   - id: AVD-AWS-0054
